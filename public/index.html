@@ -187,6 +187,7 @@
     <div class="multi-panel">
       <input id="playerName" maxlength="18" placeholder="Your name" aria-label="Your name">
       <input id="roomCode" maxlength="20" value="baseplate" placeholder="Room code" aria-label="Room code">
+      <input id="serverUrl" maxlength="160" placeholder="Render server URL" aria-label="Render server URL">
       <button class="btn" id="joinRoom" type="button">Join room</button>
       <span class="multi-status" id="roomStatus">Multiplayer offline</span>
     </div>
@@ -797,8 +798,33 @@ function connectMultiplayer() {
   const room = ($('#roomCode').value.trim() || 'baseplate').slice(0, 20);
   const name = ($('#playerName').value.trim() || 'Yeep').slice(0, 18);
   $('#roomCode').value = room;
-  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${scheme}//${location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`;
+  let serverAddress = $('#serverUrl').value.trim();
+  let serverOrigin;
+  if (serverAddress) {
+    if (!/^https?:\/\//i.test(serverAddress)) serverAddress = `https://${serverAddress}`;
+    try {
+      const parsed = new URL(serverAddress);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Use an http or https server URL.');
+      serverOrigin = parsed.origin;
+      $('#serverUrl').value = serverOrigin;
+      try { localStorage.setItem('yeeps-server-url', serverOrigin); } catch {}
+    } catch {
+      toast('Enter the Render URL, like https://your-game.onrender.com');
+      return;
+    }
+  } else if (location.protocol === 'http:' || location.protocol === 'https:') {
+    serverOrigin = location.origin;
+  } else {
+    try { serverOrigin = localStorage.getItem('yeeps-server-url'); } catch {}
+    if (!serverOrigin) {
+      toast('Enter your Render server URL to connect from the Downloads copy.');
+      return;
+    }
+    $('#serverUrl').value = serverOrigin;
+  }
+  const server = new URL(serverOrigin);
+  const scheme = server.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${scheme}//${server.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`;
   const socket = new WebSocket(url);
   multiplayerSocket = socket;
   $('#roomStatus').textContent = 'Connecting…';
