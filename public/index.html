@@ -777,17 +777,71 @@ function createRemoteAvatar(player) {
   player.group = group;
   player.labelTexture = labelTexture;
   scene.add(group);
+  if (player.vrPose) enterRemoteVR(player);
+}
+
+function enterRemoteVR(player) {
+  if (!player.group || !player.rig || player.vrMode) return;
+  const holders = { head: new THREE.Object3D(), R: new THREE.Object3D(), L: new THREE.Object3D() };
+  player.group.add(holders.head, holders.R, holders.L);
+  placeBoneUnder(player.rig.arms.R.palm, holders.R);
+  placeBoneUnder(player.rig.arms.L.palm, holders.L);
+  placeBoneUnder(player.rig.bones.root, holders.head);
+  player.rig.full.forEach((m) => { m.visible = false; });
+  player.rig.parts.head.forEach((m) => { m.visible = true; });
+  player.rig.parts.handR.forEach((m) => { m.visible = true; });
+  player.rig.parts.handL.forEach((m) => { m.visible = true; });
+  holders.R.scale.setScalar(HAND_SCALE / BODY_SCALE);
+  holders.L.scale.setScalar(HAND_SCALE / BODY_SCALE);
+  player.vrHolders = holders;
+  player.vrMode = true;
+}
+
+function exitRemoteVR(player) {
+  if (!player.vrMode || !player.rig) return;
+  restoreBone(player.rig.arms.R.palm);
+  restoreBone(player.rig.arms.L.palm);
+  restoreBone(player.rig.bones.root);
+  player.group.remove(player.vrHolders.head, player.vrHolders.R, player.vrHolders.L);
+  player.rig.full.forEach((m) => { m.visible = true; });
+  ['head', 'handR', 'handL'].forEach((k) => player.rig.parts[k].forEach((m) => { m.visible = false; }));
+  player.rig.resetPose();
+  player.vrHolders = null;
+  player.vrMode = false;
+}
+
+function applyRemoteVRPose(player) {
+  if (!player.vrPose || !player.vrMode) return;
+  player.group.updateMatrixWorld(true);
+  const groupRotation = player.group.getWorldQuaternion(new THREE.Quaternion()).invert();
+  for (const key of ['R', 'L']) {
+    const hand = player.vrPose[key];
+    const holder = player.vrHolders[key];
+    const visible = !!hand;
+    player.rig.parts['hand' + key].forEach((m) => { m.visible = visible; });
+    holder.visible = visible;
+    if (!visible) continue;
+    holder.position.copy(player.group.worldToLocal(new THREE.Vector3(hand.p[0], hand.p[1], hand.p[2])));
+    holder.quaternion.set(hand.q[0], hand.q[1], hand.q[2], hand.q[3]).premultiply(groupRotation).normalize();
+    player.rig.curlHand(key, hand.c[0], hand.c[1], hand.c[2]);
+  }
 }
 
 function upsertRemoteAvatar(data) {
   if (!data || data.id === localPlayerId) return;
   let player = remotePlayers.get(data.id);
   if (!player) {
-    player = { id: data.id, name: data.name || 'Yeep', x: data.x || 0, y: data.y || 0, z: data.z || 0, facing: data.facing || 0 };
+    player = { id: data.id, name: data.name || 'Yeep', x: data.x || 0, y: data.y || 0, z: data.z || 0, facing: data.facing || 0, vrPose: null, vrMode: false };
     remotePlayers.set(data.id, player);
   }
   Object.assign(player, { name: data.name || player.name, x: data.x, y: data.y, z: data.z, facing: data.facing });
+  if (Object.hasOwn(data, 'vr')) {
+    player.vrPose = data.vr;
+    if (player.vrPose) enterRemoteVR(player);
+    else exitRemoteVR(player);
+  }
   createRemoteAvatar(player);
+  if (player.vrPose) enterRemoteVR(player);
 }
 
 function connectMultiplayer() {
@@ -963,6 +1017,25 @@ const _s = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _rel = new THREE.Vector3();
+
+function multiplayerVRPose() {
+  if (!renderer.xr.isPresenting) return null;
+  const pose = {};
+  for (const [hand, key] of [['right', 'R'], ['left', 'L']]) {
+    const grip = gripOf(hand);
+    if (!grip || !grip.visible || !inputs[hand]) { pose[key] = null; continue; }
+    const position = grip.getWorldPosition(new THREE.Vector3());
+    const rotation = grip.getWorldQuaternion(new THREE.Quaternion());
+    const index = btn(inputs[hand], 0);
+    const middle = btn(inputs[hand], 1);
+    pose[key] = {
+      p: [position.x, position.y, position.z],
+      q: [rotation.x, rotation.y, rotation.z, rotation.w],
+      c: [index, middle, Math.max(middle, index * 0.4)],
+    };
+  }
+  return pose;
+}
 
 function stick(src) {
   const gp = src && src.gamepad;
@@ -1283,10 +1356,14 @@ renderer.setAnimationLoop(() => {
 
   for (const remote of remotePlayers.values()) {
     if (!remote.group) continue;
-    remote.group.position.x = damp(remote.group.position.x, remote.x, 12, dt);
-    remote.group.position.y = damp(remote.group.position.y, remote.y + ARM_REACH * BODY_SCALE + 0.02, 12, dt);
-    remote.group.position.z = damp(remote.group.position.z, remote.z, 12, dt);
+    const oldX = remote.group.position.x, oldZ = remote.group.position.z;
+    remote.group.position.x = damp(oldX, remote.x, 12, dt);
+    remote.group.position.z = damp(oldZ, remote.z, 12, dt);
+    const remoteSpeed = Math.hypot(remote.group.position.x - oldX, remote.group.position.z - oldZ) / Math.max(dt, 0.001);
+    const remoteBob = remote.rig && !remote.vrMode ? remote.rig.animateFlat(dt, remoteSpeed, remote.y <= 0.01) : 0;
+    remote.group.position.y = damp(remote.group.position.y, remote.y + ARM_REACH * BODY_SCALE + 0.02 + remoteBob, 12, dt);
     remote.group.rotation.y = lerpAngle(remote.group.rotation.y, remote.facing, 1 - Math.exp(-12 * dt));
+    if (remote.vrMode) applyRemoteVRPose(remote);
   }
 
   const now = performance.now();
@@ -1296,6 +1373,7 @@ renderer.setAnimationLoop(() => {
       type: 'move',
       position: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
       facing: player.facing,
+      vr: multiplayerVRPose(),
     }));
   }
 
