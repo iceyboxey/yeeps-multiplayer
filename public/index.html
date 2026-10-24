@@ -285,7 +285,7 @@ const state = {
   vrSupported: false,
 };
 const player = {
-  pos: new THREE.Vector3(0, 0, 0),
+  pos: new THREE.Vector3(0, 0.5, -5.5),
   vel: new THREE.Vector3(),
   vy: 0,
   grounded: true,
@@ -418,7 +418,7 @@ function makeStudTexture() {
     new THREE.MeshBasicMaterial({ color: 0xb04fd9, transparent: true, opacity: 0.8 })
   );
   ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.01;
+  ring.position.set(0, 0.01, -5.5);
   scene.add(ring);
 }
 
@@ -1213,6 +1213,8 @@ renderer.xr.addEventListener('sessionstart', () => {
   dolly.add(camera);
   camera.position.set(0, 0, 0);
   camera.quaternion.identity();
+  player.pos.y = 0.5;
+  player.vy = 0;
   dolly.position.copy(player.pos);
   dolly.rotation.set(0, cam.yaw, 0);
   avatar.visible = true; // the head and hand pieces live inside this group
@@ -1274,6 +1276,8 @@ function showOverlay(label) {
 function play() {
   if (!state.ready) return;
   overlay.hidden = true;
+  player.pos.y = 0.5;
+  player.vy = 0;
   state.playing = true;
   state.playStart = performance.now();
   $('#hint').hidden = false;
