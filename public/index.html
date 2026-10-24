@@ -772,7 +772,7 @@ function createRemoteAvatar(player) {
   const labelTexture = new THREE.CanvasTexture(labelCanvas);
   const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture, transparent: true, depthTest: false }));
   label.scale.set(1.6, 0.4, 1);
-  label.position.y = 2.65;
+  label.position.y = 2.2;
   group.add(label);
   player.group = group;
   player.labelTexture = labelTexture;
@@ -814,6 +814,13 @@ function applyRemoteVRPose(player) {
   if (!player.vrPose || !player.vrMode) return;
   player.group.updateMatrixWorld(true);
   const groupRotation = player.group.getWorldQuaternion(new THREE.Quaternion()).invert();
+  const head = player.vrPose.H;
+  if (head) {
+    player.vrHolders.head.position.copy(player.group.worldToLocal(new THREE.Vector3(
+      player.x + head.p[0], player.y + head.p[1], player.z + head.p[2],
+    )));
+    player.vrHolders.head.quaternion.set(head.q[0], head.q[1], head.q[2], head.q[3]).premultiply(groupRotation).normalize();
+  }
   for (const key of ['R', 'L']) {
     const hand = player.vrPose[key];
     const holder = player.vrHolders[key];
@@ -1023,6 +1030,10 @@ const _rel = new THREE.Vector3();
 function multiplayerVRPose() {
   if (!renderer.xr.isPresenting) return null;
   const pose = {};
+  pose.H = {
+    p: [vr.headPos.x - player.pos.x, vr.headPos.y - player.pos.y, vr.headPos.z - player.pos.z],
+    q: [vr.headQuat.x, vr.headQuat.y, vr.headQuat.z, vr.headQuat.w],
+  };
   for (const [hand, key] of [['right', 'R'], ['left', 'L']]) {
     const grip = gripOf(hand);
     if (!grip || !grip.visible || !inputs[hand]) { pose[key] = null; continue; }
