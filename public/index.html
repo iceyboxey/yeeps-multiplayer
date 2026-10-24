@@ -285,7 +285,7 @@ const state = {
   vrSupported: false,
 };
 const player = {
-  pos: new THREE.Vector3(0, 0.5, -5.5),
+  pos: new THREE.Vector3(0, 0.5, -1.5),
   vel: new THREE.Vector3(),
   vy: 0,
   grounded: true,
@@ -418,7 +418,7 @@ function makeStudTexture() {
     new THREE.MeshBasicMaterial({ color: 0xb04fd9, transparent: true, opacity: 0.8 })
   );
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(0, 0.01, -5.5);
+  ring.position.set(0, 0.01, -1.5);
   scene.add(ring);
 }
 
