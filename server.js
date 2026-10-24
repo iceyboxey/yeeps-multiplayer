@@ -94,10 +94,10 @@ wss.on('connection', (socket, request) => {
   }
 
   const id = randomUUID();
-  const player = { id, name, room: roomCode, socket, x: 0, y: 0, z: 0, facing: 0, vr: null };
+  const player = { id, name, room: roomCode, socket, x: 0, y: 0.5, z: -5.5, facing: 0, vr: null };
   send(socket, { type: 'welcome', id, room: roomCode, players: snapshot(room) });
   room.set(id, player);
-  broadcast(room, { type: 'join', player: { id, name, x: 0, y: 0, z: 0, facing: 0, vr: null } }, id);
+  broadcast(room, { type: 'join', player: { id, name, x: 0, y: 0.5, z: -5.5, facing: 0, vr: null } }, id);
 
   socket.on('message', (raw) => {
     let message;
