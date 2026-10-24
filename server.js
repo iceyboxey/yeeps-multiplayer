@@ -29,7 +29,28 @@ function send(socket, message) {
 function snapshot(room, exceptId = null) {
   return [...room.values()]
     .filter((player) => player.id !== exceptId)
-    .map(({ id, name, x, y, z, facing }) => ({ id, name, x, y, z, facing }));
+    .map(({ id, name, x, y, z, facing, vr }) => ({ id, name, x, y, z, facing, vr }));
+}
+
+function cleanVRPose(value) {
+  if (!value || typeof value !== 'object') return null;
+  const pose = {};
+  for (const side of ['L', 'R']) {
+    const hand = value[side];
+    if (!hand || !Array.isArray(hand.p) || hand.p.length !== 3 ||
+        !Array.isArray(hand.q) || hand.q.length !== 4 ||
+        !Array.isArray(hand.c) || hand.c.length !== 3 ||
+        ![...hand.p, ...hand.q, ...hand.c].every(Number.isFinite)) {
+      pose[side] = null;
+      continue;
+    }
+    pose[side] = {
+      p: hand.p.map((n) => Math.max(-5, Math.min(5, n))),
+      q: hand.q.map((n) => Math.max(-1, Math.min(1, n))),
+      c: hand.c.map((n) => Math.max(0, Math.min(1, n))),
+    };
+  }
+  return pose;
 }
 
 function broadcast(room, message, exceptId = null) {
@@ -62,10 +83,10 @@ wss.on('connection', (socket, request) => {
   }
 
   const id = randomUUID();
-  const player = { id, name, room: roomCode, socket, x: 0, y: 0, z: 0, facing: 0 };
+  const player = { id, name, room: roomCode, socket, x: 0, y: 0, z: 0, facing: 0, vr: null };
   send(socket, { type: 'welcome', id, room: roomCode, players: snapshot(room) });
   room.set(id, player);
-  broadcast(room, { type: 'join', player: { id, name, x: 0, y: 0, z: 0, facing: 0 } }, id);
+  broadcast(room, { type: 'join', player: { id, name, x: 0, y: 0, z: 0, facing: 0, vr: null } }, id);
 
   socket.on('message', (raw) => {
     let message;
@@ -82,9 +103,10 @@ wss.on('connection', (socket, request) => {
     player.y = Math.max(0, Math.min(20, y));
     player.z = Math.max(-198, Math.min(198, z));
     player.facing = Math.max(-Math.PI * 4, Math.min(Math.PI * 4, facing));
+    player.vr = cleanVRPose(message.vr);
     broadcast(room, {
       type: 'move',
-      player: { id, name, x: player.x, y: player.y, z: player.z, facing: player.facing },
+      player: { id, name, x: player.x, y: player.y, z: player.z, facing: player.facing, vr: player.vr },
     }, id);
   });
 
