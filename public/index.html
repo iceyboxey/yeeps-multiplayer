@@ -798,7 +798,9 @@ function connectMultiplayer() {
   const room = ($('#roomCode').value.trim() || 'baseplate').slice(0, 20);
   const name = ($('#playerName').value.trim() || 'Yeep').slice(0, 18);
   $('#roomCode').value = room;
-  const serverOrigin = location.protocol === 'http:' || location.protocol === 'https:'
+  // The game can be hosted on Vercel while multiplayer runs on Render.
+  // Only use this page's origin when the page itself is served by the game server.
+  const serverOrigin = location.hostname === 'yeeps-multiplayer.onrender.com'
     ? location.origin
     : DEFAULT_MULTIPLAYER_ORIGIN;
   const server = new URL(serverOrigin);
