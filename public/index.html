@@ -296,6 +296,50 @@ const keys = {};
 const touch = { x: 0, y: 0, stickId: null, lookId: null, ox: 0, oy: 0, lx: 0, ly: 0 };
 let jumpQueued = false;
 let mapColliders = [];
+let collisionBoxes = [];
+let collisionDataReady = false;
+let doorOpen = false;
+const DOOR_COLLIDERS = [
+  [-1.4, 0.85, 0.75, 3.15, -3.08, -2.92],
+  [0.85, 3.1, 0.75, 3.15, -3.08, -2.92],
+];
+function refreshCollisionBoxes() {
+  collisionBoxes = doorOpen ? mapColliders : mapColliders.concat(DOOR_COLLIDERS);
+}
+const doorPivots = [];
+function createExitDoor() {
+  const wood = new THREE.MeshStandardMaterial({ color: 0x704628, roughness: 0.82 });
+  const trim = new THREE.MeshStandardMaterial({ color: 0xb88b4c, roughness: 0.55 });
+  const knobs = new THREE.MeshStandardMaterial({ color: 0xe7c46c, metalness: 0.65, roughness: 0.25 });
+  for (const side of [-1, 1]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side < 0 ? -1.4 : 3.1, 0.75, -3);
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(2.25, 2.4, 0.12), wood);
+    leaf.position.set(side < 0 ? 1.125 : -1.125, 1.2, 0);
+    leaf.castShadow = true;
+    leaf.receiveShadow = true;
+    pivot.add(leaf);
+    const inset = new THREE.Mesh(new THREE.BoxGeometry(1.86, 1.95, 0.025), trim);
+    inset.position.set(side < 0 ? 1.125 : -1.125, 1.22, side < 0 ? 0.073 : -0.073);
+    pivot.add(inset);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 8), knobs);
+    knob.position.set(side < 0 ? 1.86 : -1.86, 1.2, side < 0 ? 0.1 : -0.1);
+    pivot.add(knob);
+    scene.add(pivot);
+    doorPivots.push({ pivot, side });
+  }
+}
+function updateExitDoor(dt) {
+  const distance = Math.hypot(player.pos.x - 0.85, player.pos.z + 3);
+  const shouldOpen = state.playing && distance < (doorOpen ? 4.6 : 2.4);
+  if (shouldOpen !== doorOpen) {
+    doorOpen = shouldOpen;
+    refreshCollisionBoxes();
+  }
+  for (const { pivot, side } of doorPivots) {
+    pivot.rotation.y = damp(pivot.rotation.y, doorOpen ? (side < 0 ? Math.PI / 2 : -Math.PI / 2) : 0, 7, dt);
+  }
+}
 const PLAYER_RADIUS = 0.42;
 const PLAYER_HEIGHT = 1.8;
 
@@ -423,9 +467,12 @@ function makeStudTexture() {
 }
 
 async function loadMap() {
+  createExitDoor();
   const inlineColliders = document.getElementById('starter-house-colliders')?.textContent.trim();
   if (inlineColliders) {
     mapColliders = JSON.parse(inlineColliders);
+    collisionDataReady = true;
+    refreshCollisionBoxes();
   } else {
     try {
       const response = await fetch(new URL('/maps/colliders.json', location.href));
@@ -435,6 +482,8 @@ async function loadMap() {
       mapColliders = [];
       console.warn('Map collision data unavailable:', err);
     }
+    collisionDataReady = true;
+    refreshCollisionBoxes();
   }
   const loader = new GLTFLoader();
   const inlineData = document.getElementById('starter-house-glb')?.textContent.trim();
@@ -960,7 +1009,7 @@ function connectMultiplayer() {
 function collidesAt(x, z) {
   const feet = player.pos.y;
   const head = feet + PLAYER_HEIGHT;
-  for (const box of mapColliders) {
+  for (const box of collisionBoxes) {
     const [minX, maxX, minY, maxY, minZ, maxZ] = box;
     if (head <= minY || feet >= maxY || maxY <= feet + 0.75) continue;
     const nearX = clamp(x, minX, maxX);
@@ -974,6 +1023,7 @@ function collidesAt(x, z) {
 function stepPhysics(dt, tvx, tvz, jump, accel) {
   player.vel.x = damp(player.vel.x, tvx, player.grounded ? accel : accel * 0.3, dt);
   player.vel.z = damp(player.vel.z, tvz, player.grounded ? accel : accel * 0.3, dt);
+  if (!collisionDataReady) { player.vy = 0; player.grounded = true; return; }
   if (jump && player.grounded) { player.vy = JUMP_SPEED; player.grounded = false; }
   player.vy -= GRAVITY * dt;
   const nextX = clamp(player.pos.x + player.vel.x * dt, -PLATE / 2 + 2, PLATE / 2 - 2);
@@ -988,7 +1038,7 @@ function stepPhysics(dt, tvx, tvz, jump, accel) {
   if (player.vy > 0) {
     const previousHead = previousY + PLAYER_HEIGHT;
     const nextHead = nextY + PLAYER_HEIGHT;
-    for (const box of mapColliders) {
+    for (const box of collisionBoxes) {
       const [minX, maxX, minY] = box;
       const nearX = clamp(player.pos.x, minX, maxX);
       const nearZ = clamp(player.pos.z, box[4], box[5]);
@@ -1005,8 +1055,8 @@ function stepPhysics(dt, tvx, tvz, jump, accel) {
   let landed = false;
   if (player.vy <= 0 && !hitCeiling) {
     let landingY = 0;
-    for (const box of mapColliders) {
-      const [minX, maxX, topY, , minZ, maxZ] = box;
+    for (const box of collisionBoxes) {
+      const [minX, maxX, , topY, minZ, maxZ] = box;
       if (topY > previousY + 0.02 || topY < nextY || topY <= landingY) continue;
       const nearX = clamp(player.pos.x, minX, maxX);
       const nearZ = clamp(player.pos.z, minZ, maxZ);
@@ -1260,7 +1310,7 @@ renderer.xr.addEventListener('sessionstart', () => {
   dolly.add(camera);
   camera.position.set(0, 0, 0);
   camera.quaternion.identity();
-  player.pos.y = 0.5;
+  player.pos.y = 1.2;
   player.vy = 0;
   dolly.position.copy(player.pos);
   dolly.rotation.set(0, cam.yaw, 0);
@@ -1462,6 +1512,7 @@ if (navigator.xr && navigator.xr.isSessionSupported) {
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
+  updateExitDoor(dt);
   if (renderer.xr.isPresenting) updateVR(dt);
   else updateFlat(dt);
 
