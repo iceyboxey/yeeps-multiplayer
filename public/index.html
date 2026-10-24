@@ -962,7 +962,7 @@ function collidesAt(x, z) {
   const head = feet + PLAYER_HEIGHT;
   for (const box of mapColliders) {
     const [minX, maxX, minY, maxY, minZ, maxZ] = box;
-    if (head <= minY || feet >= maxY || maxY <= feet + 0.28) continue;
+    if (head <= minY || feet >= maxY || maxY <= feet + 0.75) continue;
     const nearX = clamp(x, minX, maxX);
     const nearZ = clamp(z, minZ, maxZ);
     const dx = x - nearX, dz = z - nearZ;
