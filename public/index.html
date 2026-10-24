@@ -427,9 +427,14 @@ async function loadMap() {
   if (inlineColliders) {
     mapColliders = JSON.parse(inlineColliders);
   } else {
-    const response = await fetch(new URL('/maps/colliders.json', location.href));
-    if (!response.ok) throw new Error(`Could not load map collisions (${response.status})`);
-    mapColliders = await response.json();
+    try {
+      const response = await fetch(new URL('/maps/colliders.json', location.href));
+      if (!response.ok) throw new Error(`Could not load map collisions (${response.status})`);
+      mapColliders = await response.json();
+    } catch (err) {
+      mapColliders = [];
+      console.warn('Map collision data unavailable:', err);
+    }
   }
   const loader = new GLTFLoader();
   const inlineData = document.getElementById('starter-house-glb')?.textContent.trim();
@@ -1450,14 +1455,30 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 });
 
-Promise.all([loadAvatar(), loadMap()]).then(() => {
+let mapReady = false;
+loadMap().then(() => {
+  mapReady = true;
+  if (state.ready) $('#loadNote').hidden = true;
+}).catch((err) => {
+  console.error('Could not load the map:', err);
+  if (state.ready) {
+    $('#loadNote').textContent = 'The Yeep is ready, but the map could not load. Reload to try again.';
+    $('#loadNote').hidden = false;
+  }
+});
+loadAvatar().then(() => {
   state.ready = true;
   playBtn.disabled = false;
   playBtn.textContent = 'Play';
-  $('#loadNote').hidden = true;
+  if (mapReady) $('#loadNote').hidden = true;
+  else {
+    $('#loadNote').textContent = 'Loading the map… You can start playing now.';
+    $('#loadNote').hidden = false;
+  }
 }).catch((err) => {
-  console.error(err);
-  $('#loadNote').textContent = 'Could not load the game: ' + (err && err.message ? err.message : err);
+  console.error('Could not load the Yeep:', err);
+  $('#loadNote').textContent = 'Could not load the Yeep: ' + (err && err.message ? err.message : err);
+  $('#loadNote').hidden = false;
 });
 
 </script>
