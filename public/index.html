@@ -821,7 +821,9 @@ function applyRemoteVRPose(player) {
     player.rig.parts['hand' + key].forEach((m) => { m.visible = visible; });
     holder.visible = visible;
     if (!visible) continue;
-    holder.position.copy(player.group.worldToLocal(new THREE.Vector3(hand.p[0], hand.p[1], hand.p[2])));
+    holder.position.copy(player.group.worldToLocal(new THREE.Vector3(
+      player.x + hand.p[0], player.y + hand.p[1], player.z + hand.p[2],
+    )));
     holder.quaternion.set(hand.q[0], hand.q[1], hand.q[2], hand.q[3]).premultiply(groupRotation).normalize();
     player.rig.curlHand(key, hand.c[0], hand.c[1], hand.c[2]);
   }
@@ -1029,7 +1031,7 @@ function multiplayerVRPose() {
     const index = btn(inputs[hand], 0);
     const middle = btn(inputs[hand], 1);
     pose[key] = {
-      p: [position.x, position.y, position.z],
+      p: [position.x - player.pos.x, position.y - player.pos.y, position.z - player.pos.z],
       q: [rotation.x, rotation.y, rotation.z, rotation.w],
       c: [index, middle, Math.max(middle, index * 0.4)],
     };
