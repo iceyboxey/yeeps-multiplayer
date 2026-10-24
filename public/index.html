@@ -295,6 +295,9 @@ const cam = { yaw: 0, pitch: -0.22, dist: 3.9 };
 const keys = {};
 const touch = { x: 0, y: 0, stickId: null, lookId: null, ox: 0, oy: 0, lx: 0, ly: 0 };
 let jumpQueued = false;
+let mapColliders = [];
+const PLAYER_RADIUS = 0.42;
+const PLAYER_HEIGHT = 1.8;
 
 /* =====================================================================
    Renderer, scene, camera
@@ -420,6 +423,14 @@ function makeStudTexture() {
 }
 
 async function loadMap() {
+  const inlineColliders = document.getElementById('starter-house-colliders')?.textContent.trim();
+  if (inlineColliders) {
+    mapColliders = JSON.parse(inlineColliders);
+  } else {
+    const response = await fetch(new URL('/maps/colliders.json', location.href));
+    if (!response.ok) throw new Error(`Could not load map collisions (${response.status})`);
+    mapColliders = await response.json();
+  }
   const loader = new GLTFLoader();
   const inlineData = document.getElementById('starter-house-glb')?.textContent.trim();
   let gltf;
@@ -941,13 +952,31 @@ function connectMultiplayer() {
 /* =====================================================================
    Shared physics
    ===================================================================== */
+function collidesAt(x, z) {
+  const feet = player.pos.y;
+  const head = feet + PLAYER_HEIGHT;
+  for (const box of mapColliders) {
+    const [minX, maxX, minY, maxY, minZ, maxZ] = box;
+    if (head <= minY || feet >= maxY) continue;
+    const nearX = clamp(x, minX, maxX);
+    const nearZ = clamp(z, minZ, maxZ);
+    const dx = x - nearX, dz = z - nearZ;
+    if (dx * dx + dz * dz < PLAYER_RADIUS * PLAYER_RADIUS) return true;
+  }
+  return false;
+}
+
 function stepPhysics(dt, tvx, tvz, jump, accel) {
   player.vel.x = damp(player.vel.x, tvx, player.grounded ? accel : accel * 0.3, dt);
   player.vel.z = damp(player.vel.z, tvz, player.grounded ? accel : accel * 0.3, dt);
   if (jump && player.grounded) { player.vy = JUMP_SPEED; player.grounded = false; }
   player.vy -= GRAVITY * dt;
-  player.pos.x = clamp(player.pos.x + player.vel.x * dt, -PLATE / 2 + 2, PLATE / 2 - 2);
-  player.pos.z = clamp(player.pos.z + player.vel.z * dt, -PLATE / 2 + 2, PLATE / 2 - 2);
+  const nextX = clamp(player.pos.x + player.vel.x * dt, -PLATE / 2 + 2, PLATE / 2 - 2);
+  if (collidesAt(nextX, player.pos.z)) player.vel.x = 0;
+  else player.pos.x = nextX;
+  const nextZ = clamp(player.pos.z + player.vel.z * dt, -PLATE / 2 + 2, PLATE / 2 - 2);
+  if (collidesAt(player.pos.x, nextZ)) player.vel.z = 0;
+  else player.pos.z = nextZ;
   player.pos.y += player.vy * dt;
   if (player.pos.y <= 0) { player.pos.y = 0; player.vy = 0; player.grounded = true; }
 }
