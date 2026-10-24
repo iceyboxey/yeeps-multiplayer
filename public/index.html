@@ -982,8 +982,50 @@ function stepPhysics(dt, tvx, tvz, jump, accel) {
   const nextZ = clamp(player.pos.z + player.vel.z * dt, -PLATE / 2 + 2, PLATE / 2 - 2);
   if (collidesAt(player.pos.x, nextZ)) player.vel.z = 0;
   else player.pos.z = nextZ;
-  player.pos.y += player.vy * dt;
-  if (player.pos.y <= 0) { player.pos.y = 0; player.vy = 0; player.grounded = true; }
+  const previousY = player.pos.y;
+  let nextY = previousY + player.vy * dt;
+  let hitCeiling = false;
+  if (player.vy > 0) {
+    const previousHead = previousY + PLAYER_HEIGHT;
+    const nextHead = nextY + PLAYER_HEIGHT;
+    for (const box of mapColliders) {
+      const [minX, maxX, minY] = box;
+      const nearX = clamp(player.pos.x, minX, maxX);
+      const nearZ = clamp(player.pos.z, box[4], box[5]);
+      const dx = player.pos.x - nearX, dz = player.pos.z - nearZ;
+      if (dx * dx + dz * dz >= PLAYER_RADIUS * PLAYER_RADIUS) continue;
+      if (previousHead <= minY && nextHead >= minY) {
+        nextY = minY - PLAYER_HEIGHT;
+        player.vy = 0;
+        hitCeiling = true;
+        break;
+      }
+    }
+  }
+  let landed = false;
+  if (player.vy <= 0 && !hitCeiling) {
+    let landingY = 0;
+    for (const box of mapColliders) {
+      const [minX, maxX, topY, , minZ, maxZ] = box;
+      if (topY > previousY + 0.02 || topY < nextY || topY <= landingY) continue;
+      const nearX = clamp(player.pos.x, minX, maxX);
+      const nearZ = clamp(player.pos.z, minZ, maxZ);
+      const dx = player.pos.x - nearX, dz = player.pos.z - nearZ;
+      if (dx * dx + dz * dz < PLAYER_RADIUS * PLAYER_RADIUS) landingY = topY;
+    }
+    if (landingY > 0) {
+      nextY = landingY;
+      player.vy = 0;
+      landed = true;
+    }
+  }
+  if (nextY <= 0) {
+    nextY = 0;
+    player.vy = 0;
+    landed = true;
+  }
+  player.pos.y = nextY;
+  player.grounded = landed;
 }
 
 /* =====================================================================
