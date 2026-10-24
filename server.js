@@ -110,9 +110,9 @@ wss.on('connection', (socket, request) => {
     const { x, y, z } = message.position;
     const facing = message.facing;
     if (![x, y, z, facing].every(Number.isFinite)) return;
-    player.x = Math.max(-198, Math.min(198, x));
+    player.x = Math.max(-266, Math.min(266, x));
     player.y = Math.max(0, Math.min(20, y));
-    player.z = Math.max(-198, Math.min(198, z));
+    player.z = Math.max(-266, Math.min(266, z));
     player.facing = Math.max(-Math.PI * 4, Math.min(Math.PI * 4, facing));
     player.vr = cleanVRPose(message.vr);
     broadcast(room, {
