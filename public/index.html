@@ -179,7 +179,7 @@
 <div id="overlay">
   <div class="card">
     <h1>Yeeps</h1>
-    <p class="lede">Walk around as a Yeep on a flat baseplate. Works with keyboard and mouse, touch, and VR headsets.</p>
+    <p class="lede">Explore the Starter House map as a Yeep. Works with keyboard and mouse, touch, and VR headsets.</p>
     <div class="actions">
       <button class="btn primary" id="play" type="button" disabled>Loading Yeep…</button>
       <button class="btn" id="vrBtn" type="button" hidden>Enter VR</button>
@@ -1424,7 +1424,7 @@ Promise.all([loadAvatar(), loadMap()]).then(() => {
   $('#loadNote').hidden = true;
 }).catch((err) => {
   console.error(err);
-  $('#loadNote').textContent = 'Could not load the Yeep: ' + (err && err.message ? err.message : err);
+  $('#loadNote').textContent = 'Could not load the game: ' + (err && err.message ? err.message : err);
 });
 
 </script>
