@@ -35,6 +35,17 @@ function snapshot(room, exceptId = null) {
 function cleanVRPose(value) {
   if (!value || typeof value !== 'object') return null;
   const pose = {};
+  const head = value.H;
+  if (head && Array.isArray(head.p) && head.p.length === 3 &&
+      Array.isArray(head.q) && head.q.length === 4 &&
+      [...head.p, ...head.q].every(Number.isFinite)) {
+    pose.H = {
+      p: head.p.map((n) => Math.max(-5, Math.min(5, n))),
+      q: head.q.map((n) => Math.max(-1, Math.min(1, n))),
+    };
+  } else {
+    pose.H = null;
+  }
   for (const side of ['L', 'R']) {
     const hand = value[side];
     if (!hand || !Array.isArray(hand.p) || hand.p.length !== 3 ||
