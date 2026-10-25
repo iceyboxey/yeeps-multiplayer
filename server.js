@@ -16,7 +16,9 @@ const ADMIN_KEY = process.env.ADMIN_KEY || '';
 // (for example DATA_DIR=/var/data), otherwise they reset whenever the service restarts.
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
-const DROPPABLE = new Set(['banana', 'mango', 'flashlight', 'keycard', 'ball']);
+const DROPPABLE = new Set(['banana', 'mango', 'flashlight', 'keycard', 'ball', 'snowball', 'balloon', 'pin']);
+const TINT_KINDS = new Set(['yellow', 'blue', 'white']);
+const THROW_KINDS = new Set(['snowball', 'balloon']);
 const HELD_KINDS = new Set([...DROPPABLE, 'banglass']);
 
 const app = express();
@@ -121,21 +123,31 @@ function cleanHeld(value) {
   return out;
 }
 function publicPlayer(p) {
-  return { id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, facing: p.facing, vr: p.vr, held: p.held, tint: !!p.tint };
+  return { id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, facing: p.facing, vr: p.vr, held: p.held, tint: p.tint || null };
 }
 function itemsFor(roomCode) {
   return [...(roomItems.get(roomCode) || new Map()).values()];
 }
 
-/* ---------------- tag game ---------------- */
-const tags = new Map(); // room code -> { it, lastTag, startedAt, times: Map(id -> seconds as IT), names: Map(id -> name) }
-const TAG_RANGE = 1.3;       // metres
-const TAG_COOLDOWN = 2000;   // ms before the new IT can tag again
-const TAG_ROUND = 180;       // seconds
+/* ---------------- tag game (pins) ---------------- */
+// One random player starts as the tagger and has endless pins. Hit a runner with a pin and they become a tagger too.
+// Runners still free when time runs out win; if everyone gets tagged, the first tagger wins.
+const tags = new Map(); // room code -> { taggers: Set(ids), first, startedAt }
+const TAG_ROUND = 180;  // seconds
+const wins = new Map(); // key -> { name, wins }
+for (const [k, v] of Object.entries(readJSON('wins.json', {}))) if (v && Number.isFinite(v.wins)) wins.set(k, { name: String(v.name || 'Yeep'), wins: v.wins });
+const saveWins = () => writeJSON('wins.json', Object.fromEntries(wins));
+const winKey = (p) => p.cid || 'n:' + p.name;
+function leaderboard() {
+  return [...wins.values()].sort((a, b) => b.wins - a.wins).slice(0, 10).map(({ name, wins: w }) => ({ name, wins: w }));
+}
+function broadcastLeaderboard() {
+  for (const room of rooms.values()) broadcast(room, { type: 'leaderboard', top: leaderboard() });
+}
 function tagPublic(code) {
   const t = tags.get(code);
-  if (!t) return { active: false, it: null, left: 0 };
-  return { active: true, it: t.it, left: Math.max(0, Math.ceil(TAG_ROUND - (Date.now() - t.startedAt) / 1000)) };
+  if (!t) return { active: false, taggers: [], left: 0 };
+  return { active: true, taggers: [...t.taggers], left: Math.max(0, Math.ceil(TAG_ROUND - (Date.now() - t.startedAt) / 1000)) };
 }
 function tagBroadcast(code) {
   const room = rooms.get(code);
@@ -145,49 +157,35 @@ function tagStart(code) {
   const room = rooms.get(code);
   if (!room || room.size < 2) return false;
   const ids = [...room.keys()];
-  const t = { it: ids[Math.floor(Math.random() * ids.length)], lastTag: Date.now(), startedAt: Date.now(), times: new Map(), names: new Map() };
-  for (const p of room.values()) { t.times.set(p.id, 0); t.names.set(p.id, p.name); }
-  tags.set(code, t);
+  const first = ids[Math.floor(Math.random() * ids.length)];
+  tags.set(code, { taggers: new Set([first]), first, startedAt: Date.now() });
   tagBroadcast(code);
   return true;
 }
-function tagEnd(code) {
+function tagEnd(code, why) {
   const t = tags.get(code);
   if (!t) return;
   tags.delete(code);
   const room = rooms.get(code);
   if (!room) return;
-  const scores = [...t.times.entries()].map(([id, secs]) => ({ name: t.names.get(id) || 'Yeep', secs }));
-  scores.sort((a, b) => a.secs - b.secs);
-  broadcast(room, { type: 'tagEnd', scores });
-  tagBroadcast(code);
-}
-function tagCheck(code) {
-  const t = tags.get(code);
-  const room = rooms.get(code);
-  if (!t || !room) return;
-  const it = room.get(t.it);
-  const now = Date.now();
-  if (!it || now - t.lastTag < TAG_COOLDOWN) return;
-  for (const p of room.values()) {
-    if (p.id === it.id) continue;
-    if (Math.hypot(p.x - it.x, p.z - it.z) < TAG_RANGE && Math.abs(p.y - it.y) < 2) {
-      const from = t.it;
-      t.it = p.id;
-      t.lastTag = now;
-      broadcast(room, { type: 'tag', it: p.id, from });
-      tagBroadcast(code);
-      break;
-    }
+  const winners = [];
+  if (why === 'time') for (const p of room.values()) if (!t.taggers.has(p.id)) winners.push(p);
+  if (why === 'all') { const f = room.get(t.first); if (f) winners.push(f); }
+  for (const w of winners) {
+    const rec = wins.get(winKey(w)) || { name: w.name, wins: 0 };
+    rec.name = w.name;
+    rec.wins++;
+    wins.set(winKey(w), rec);
   }
+  if (winners.length) saveWins();
+  broadcast(room, { type: 'tagEnd', winners: winners.map((w) => w.name), why });
+  tagBroadcast(code);
+  if (winners.length) broadcastLeaderboard();
 }
 setInterval(() => {
   for (const [code, t] of tags) {
-    const room = rooms.get(code);
-    if (!room) { tags.delete(code); continue; }
-    t.times.set(t.it, (t.times.get(t.it) || 0) + 1);
-    for (const p of room.values()) { t.names.set(p.id, p.name); if (!t.times.has(p.id)) t.times.set(p.id, 0); }
-    if ((Date.now() - t.startedAt) / 1000 >= TAG_ROUND) tagEnd(code);
+    if (!rooms.get(code)) { tags.delete(code); continue; }
+    if ((Date.now() - t.startedAt) / 1000 >= TAG_ROUND) tagEnd(code, 'time');
   }
 }, 1000);
 
@@ -214,12 +212,13 @@ function removePlayer(player) {
   broadcast(room, { type: 'leave', id: player.id });
   const tg = tags.get(player.room);
   if (tg) {
-    if (room.size < 2) tagEnd(player.room);
-    else if (tg.it === player.id) {
-      const ids = [...room.keys()];
-      tg.it = ids[Math.floor(Math.random() * ids.length)];
-      tg.lastTag = Date.now();
-      tagBroadcast(player.room);
+    tg.taggers.delete(player.id);
+    const ids = [...room.keys()];
+    if (room.size < 2) tagEnd(player.room, 'none');
+    else {
+      if (tg.taggers.size === 0) tg.taggers.add(ids[Math.floor(Math.random() * ids.length)]);
+      if (ids.every((k) => tg.taggers.has(k))) tagEnd(player.room, 'all');
+      else tagBroadcast(player.room);
     }
   }
   if (room.size === 0) { rooms.delete(player.room); tags.delete(player.room); }
@@ -260,8 +259,8 @@ wss.on('connection', (socket, request) => {
     items: itemsFor(roomCode),
     tag: tagPublic(roomCode),
   });
+  send(socket, { type: 'leaderboard', top: leaderboard() });
   room.set(id, player);
-  { const t = tags.get(roomCode); if (t) { t.times.set(id, 0); t.names.set(id, name); } }
   broadcast(room, { type: 'join', player: publicPlayer(player) }, id);
 
   // Same network as a banned player but a different device: allowed only if the client proves it is an admin.
@@ -296,9 +295,8 @@ wss.on('connection', (socket, request) => {
         player.facing = Math.max(-Math.PI * 4, Math.min(Math.PI * 4, facing));
         player.vr = cleanVRPose(message.vr);
         player.held = cleanHeld(message.held);
-        player.tint = message.tint === true;
+        player.tint = TINT_KINDS.has(message.tint) ? message.tint : null;
         broadcast(room, { type: 'move', player: publicPlayer(player) }, id);
-        tagCheck(roomCode);
         break;
       }
 
@@ -347,16 +345,48 @@ wss.on('connection', (socket, request) => {
         break;
       }
 
+      case 'emote': {
+        const e = message.e;
+        if (!Number.isInteger(e) || e < 0 || e > 15) break;
+        if (now - (player.lastEmote || 0) < 500) break;
+        player.lastEmote = now;
+        broadcast(room, { type: 'emote', id, e }, id);
+        break;
+      }
+
+      case 'splat': {
+        if (!THROW_KINDS.has(message.kind)) break;
+        if (now - (player.lastSplat || 0) < 150) break;
+        const target = room.get(String(message.id));
+        if (!target || target === player) break;
+        player.lastSplat = now;
+        broadcast(room, { type: 'splat', id: target.id, kind: message.kind, by: id });
+        break;
+      }
+
       case 'tagStart': {
-        if (!player.admin) break;
         if (tags.has(roomCode)) break;
         if (!tagStart(roomCode)) send(socket, { type: 'tagError', reason: 'Tag needs at least 2 players' });
         break;
       }
 
+      case 'pinHit': {
+        const t = tags.get(roomCode);
+        if (!t || !t.taggers.has(id)) break;
+        if (now - (player.lastPin || 0) < 250) break;
+        const target = room.get(String(message.id));
+        if (!target || t.taggers.has(target.id)) break;
+        player.lastPin = now;
+        t.taggers.add(target.id);
+        broadcast(room, { type: 'tag', it: target.id, from: id });
+        tagBroadcast(roomCode);
+        if ([...room.keys()].every((k) => t.taggers.has(k))) tagEnd(roomCode, 'all');
+        break;
+      }
+
       case 'tagStop': {
         if (!player.admin) break;
-        tagEnd(roomCode);
+        tagEnd(roomCode, 'stopped');
         break;
       }
 
