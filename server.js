@@ -16,7 +16,9 @@ const ADMIN_KEY = process.env.ADMIN_KEY || '';
 // (for example DATA_DIR=/var/data), otherwise they reset whenever the service restarts.
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
-const DROPPABLE = new Set(['banana', 'mango', 'flashlight', 'keycard', 'ball', 'snowball', 'balloon', 'pin']);
+const BLOCK_KINDS = new Set(['blk_grass']);
+const MAX_BLOCKS_PER_ROOM = 1500;
+const DROPPABLE = new Set(['banana', 'mango', 'flashlight', 'keycard', 'ball', 'snowball', 'balloon', 'pin', ...BLOCK_KINDS]);
 const TINT_KINDS = new Set(['yellow', 'blue', 'white']);
 const THROW_KINDS = new Set(['snowball', 'balloon']);
 const HELD_KINDS = new Set([...DROPPABLE, 'banglass']);
@@ -50,6 +52,21 @@ const roomItems = new Map();  // room -> Map(itemId -> item)
 for (const [room, list] of Object.entries(readJSON('items.json', {}))) {
   roomItems.set(room, new Map((list || []).map((it) => [it.id, it])));
 }
+// Perks: the first browser to join as "Nico" gets the railgun for good. Admins can reset the owner.
+const perks = readJSON('perks.json', {});
+if (!perks || typeof perks !== 'object') Object.assign(perks, {});
+const savePerks = () => writeJSON('perks.json', perks);
+const roomBlocks = new Map(); // room -> Map(cellKey -> { id, kind, c: [x, y, z] })
+for (const [room, list] of Object.entries(readJSON('blocks.json', {}))) {
+  const m = new Map();
+  for (const b of list || []) if (b && Array.isArray(b.c) && BLOCK_KINDS.has(b.kind)) m.set(b.c.join(','), b);
+  roomBlocks.set(room, m);
+}
+const saveBlocks = () => {
+  const out = {};
+  for (const [room, m] of roomBlocks) out[room] = [...m.values()];
+  writeJSON('blocks.json', out);
+};
 const saveBans = () => writeJSON('bans.json', [...bans.values()]);
 const saveItems = () => {
   const out = {};
@@ -258,8 +275,12 @@ wss.on('connection', (socket, request) => {
     players: [...room.values()].map(publicPlayer),
     items: itemsFor(roomCode),
     tag: tagPublic(roomCode),
+    blocks: [...(roomBlocks.get(roomCode) || new Map()).values()],
   });
   send(socket, { type: 'leaderboard', top: leaderboard() });
+  if (cid && name.toLowerCase() === 'nico' && !perks.railgunOwner) { perks.railgunOwner = cid; savePerks(); }
+  player.railgun = !!cid && perks.railgunOwner === cid;
+  send(socket, { type: 'perks', railgun: player.railgun });
   room.set(id, player);
   broadcast(room, { type: 'join', player: publicPlayer(player) }, id);
 
@@ -367,6 +388,67 @@ wss.on('connection', (socket, request) => {
       case 'tagStart': {
         if (tags.has(roomCode)) break;
         if (!tagStart(roomCode)) send(socket, { type: 'tagError', reason: 'Tag needs at least 2 players' });
+        break;
+      }
+
+      case 'blast': {
+        if (!(player.railgun || player.admin)) break;
+        if (now - (player.lastBlast || 0) < 1200) break;
+        if (!finiteArray(message.o, 3, 2000) || !finiteArray(message.d, 3, 2) || !Number.isFinite(message.len)) break;
+        player.lastBlast = now;
+        broadcast(room, { type: 'blast', id, o: round3(message.o), d: round3(message.d), len: Math.max(0, Math.min(80, message.len)) }, id);
+        break;
+      }
+
+      case 'launch': {
+        if (!(player.railgun || player.admin)) break;
+        if (now - (player.lastBlast || 0) > 800) break;
+        const target = room.get(String(message.id));
+        if (!target || target === player || !finiteArray(message.d, 3, 2)) break;
+        const L = Math.hypot(...message.d) || 1;
+        send(target.socket, { type: 'launch', by: id, d: round3(message.d.map((v) => v / L)) });
+        break;
+      }
+
+      case 'resetRailgun': {
+        if (!player.admin) break;
+        delete perks.railgunOwner;
+        savePerks();
+        for (const r of rooms.values()) for (const p of r.values()) {
+          p.railgun = false;
+          send(p.socket, { type: 'perks', railgun: false });
+        }
+        break;
+      }
+
+      case 'blockPlace': {
+        const c = message.c;
+        const okCell = Array.isArray(c) && c.length === 3 && c.every(Number.isInteger)
+          && Math.abs(c[0]) <= 5000 && Math.abs(c[2]) <= 5000 && c[1] >= 0 && c[1] <= 100;
+        const bid = message.id;
+        if (!okCell || !BLOCK_KINDS.has(message.kind) || typeof bid !== 'string' || !/^[A-Za-z0-9_-]{3,48}$/.test(bid)) break;
+        let m = roomBlocks.get(roomCode);
+        if (!m) { m = new Map(); roomBlocks.set(roomCode, m); }
+        const key = c.join(',');
+        if (m.has(key) || m.size >= MAX_BLOCKS_PER_ROOM) { send(socket, { type: 'blockDenied', id: bid }); break; }
+        const block = { id: bid, kind: message.kind, c };
+        m.set(key, block);
+        saveBlocks();
+        broadcast(room, { type: 'blockAdd', block }, id);
+        break;
+      }
+
+      case 'blockTake': {
+        const m = roomBlocks.get(roomCode);
+        if (!m) break;
+        for (const [key, b] of m) {
+          if (b.id === message.id) {
+            m.delete(key);
+            saveBlocks();
+            broadcast(room, { type: 'blockGone', id: b.id }, id);
+            break;
+          }
+        }
         break;
       }
 
